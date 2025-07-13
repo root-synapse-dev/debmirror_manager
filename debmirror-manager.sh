@@ -200,7 +200,7 @@ show_help() {
     printf "A robust, enterprise-grade script for creating local Debian mirrors.\n\n"
 
     printf "${STYLE_BOLD}USAGE:${COLOR_RESET}\n"
-    printf "    %s [debian-version] [OPTIONS]\n\n" "$SCRIPT_NAME"
+    printf "    %s [OPTIONS] [debian-version]\n\n" "$SCRIPT_NAME"
     printf "    debian-version: (Optional) The codename of the Debian release (e.g., bookworm, stable).\n"
     printf "                    Default: \"%s\"\n\n" "$DEBIAN_VERSION"
 
@@ -396,13 +396,15 @@ validate_dependencies() {
 resolve_debian_version() {
     log_info "Resolving Debian version for '${DEBIAN_VERSION}'..."
 
-    if [[ "$DEBIAN_VERSION" == "stable" || "$DEBIAN_VERSION" == "testing" || "$DEBIAN_VERSION" == "unstable" ]]; then
-        local release_url="http://${MIRROR_HOST}/${MIRROR_ROOT}/dists/${DEBIAN_VERSION}/Release"
-        local curl_cmd=(curl ${CURL_OPTIONS} -sL)
+    # Preparamos el comando curl que usaremos en ambos casos
+    local curl_cmd=(curl ${CURL_OPTIONS} -sL)
+    if $USE_PROXY; then
+        curl_cmd+=(--proxy "$PROXY")
+    fi
 
-        if $USE_PROXY; then
-            curl_cmd+=(--proxy "$PROXY")
-        fi
+    if [[ "$DEBIAN_VERSION" == "stable" || "$DEBIAN_VERSION" == "testing" || "$DEBIAN_VERSION" == "unstable" ]]; then
+        # CASO 1: Es un alias como 'stable'. Hay que resolverlo.
+        local release_url="http://${MIRROR_HOST}/${MIRROR_ROOT}/dists/${DEBIAN_VERSION}/Release"
 
         RESOLVED_DEBIAN_VERSION=$("${curl_cmd[@]}" "$release_url" | grep -oP '^Codename: \K\S+')
 
@@ -413,8 +415,21 @@ resolve_debian_version() {
 
         log_info "Resolved '${DEBIAN_VERSION}' to codename '${RESOLVED_DEBIAN_VERSION}'"
     else
-        RESOLVED_DEBIAN_VERSION="$DEBIAN_VERSION"
-        log_info "Using specified codename '${RESOLVED_DEBIAN_VERSION}'"
+        # CASO 2: Se proporcionó un nombre de código (ej: bookworm, trixie). HAY QUE VALIDARLO.
+        log_info "Validating provided codename '${DEBIAN_VERSION}'..."
+        local release_url="http://${MIRROR_HOST}/${MIRROR_ROOT}/dists/${DEBIAN_VERSION}/Release"
+
+        # Usamos curl con --fail, que devuelve un error si el HTTP status es 4xx o 5xx (como 404 Not Found)
+        if "${curl_cmd[@]}" --fail "$release_url" &> /dev/null; then
+            # Si el comando tiene éxito (exit code 0), el archivo existe y el codename es válido.
+            RESOLVED_DEBIAN_VERSION="$DEBIAN_VERSION"
+            log_info "Codename '${RESOLVED_DEBIAN_VERSION}' is valid and exists on the mirror."
+        else
+            # Si el comando falla, el codename es incorrecto.
+            log_error "Invalid or non-existent Debian codename: '${DEBIAN_VERSION}'."
+            log_error "Please provide a valid codename (e.g., bookworm, trixie) or a release channel (stable, testing)."
+            return 1 # Devolvemos un error para detener el script
+        fi
     fi
 }
 
