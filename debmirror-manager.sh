@@ -3,7 +3,7 @@
 # UNIVERSAL DEBIAN/UBUNTU MIRROR MANAGER
 #═══════════════════════════════════════════════════════════════════════════════
 # Script:      mirror-manager
-# Version:     2.9.0 (Definitive LTS Resolution Fix)
+# Version:     1.9.0-RC1
 # Author:      Synapse Dev Ω (Powered with AI) & User Collaboration
 # License:     MIT
 # Description: Enterprise-grade Debian & Ubuntu repository mirror automation.
@@ -20,7 +20,7 @@ set -euo pipefail
 # 1. METADATA AND STYLE CONSTANTS
 #═══════════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.9.0"
+readonly SCRIPT_VERSION="1.9.0-RC1"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -290,6 +290,10 @@ validate_dependencies() {
     log_info "All dependencies are satisfied."
 }
 
+# This function is the heart of the script's intelligence.
+# It uses different methods to resolve aliases (like 'stable') to their
+# actual codenames (like 'bookworm'), respecting the different infrastructures
+# of Debian and Ubuntu.
 resolve_release_version() {
     local version_to_resolve="$RELEASE_VERSION"
     log_info "Resolving release version for '${version_to_resolve}'..."
@@ -306,18 +310,21 @@ resolve_release_version() {
         fi
 
         # Use the canonical metadata file for Ubuntu LTS, as it's the most robust method.
+        # This is the "source of truth" provided by Canonical.
         if [[ "$DISTRO" == "ubuntu" && "$version_to_resolve" == "lts" ]]; then
             log_debug "Using Ubuntu's canonical metadata to resolve LTS codename."
             local meta_url="https://changelogs.ubuntu.com/meta-release-lts"
-
-	    RESOLVED_CODENAME=$("${curl_cmd[@]}" "$meta_url" | awk -F': ' '/^Dist:/ {print $2}' | tail -n 1)
+            # Get all LTS releases, and take the last one.
+            RESOLVED_CODENAME=$("${curl_cmd[@]}" "$meta_url" | awk -F': ' '/^Dist:/ {print $2}' | tail -n 1)
         else
-            # For all other aliases (Debian stable/testing, etc.), use the Release file method.
+            # For all other aliases (Debian stable/testing, etc.), 
+            # the Release file method is the standard.
             log_debug "Using Release file method to resolve alias '${version_to_resolve}'."
             local release_file_url="http://${MIRROR_HOST}/${MIRROR_ROOT}/dists/${version_to_resolve}/Release"
             RESOLVED_CODENAME=$("${curl_cmd[@]}" "$release_file_url" | grep -oP '^Codename: \K\S+')
         fi
 
+        # Final sanity check to ensure resolution was successful.
         if [[ -z "$RESOLVED_CODENAME" ]]; then
             log_error "Could not resolve codename for alias '${version_to_resolve}'."
             return 1
@@ -434,32 +441,43 @@ run_debmirror() {
 #═══════════════════════════════════════════════════════════════════════════════
 
 main() {
+    # Pre-check for simple, non-destructive flags like --help or --version.
     for arg in "$@"; do
         if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then show_help; exit 0; fi
         if [[ "$arg" == "-v" || "$arg" == "--version" ]]; then echo "$SCRIPT_NAME v$SCRIPT_VERSION"; exit 0; fi
     done
 
+    # Set the exit trap at the very beginning of any real work.
     trap cleanup_handler EXIT
+
+    # Load configurations, then parse arguments which can override the config.
     load_configuration_file
     process_arguments "$@"
+
+    # Initialize logging and other system settings.
     initialize_system
+    
+    # Set distribution-specific variables based on the final configuration.
     set_distro_config
     
     log_info "Starting $SCRIPT_NAME v$SCRIPT_VERSION for $DISTRO (PID: $$)"
     acquire_lock
 
+    # Perform all pre-flight checks and validations.
     {
         validate_dependencies &&
         resolve_release_version &&
         validate_environment
     } || exit 1
 
+    # Dynamically discover which repositories actually exist on the mirror.
     declare -a main_releases_arr=("$RESOLVED_CODENAME")
     declare security_releases=""
     log_info "Dynamically checking for available repositories for '${RESOLVED_CODENAME}'..."
     local curl_cmd=(curl -sL --fail ${CURL_OPTIONS})
     $USE_PROXY && curl_cmd+=(--proxy "$PROXY")
 
+    # This loop is now smarter about proposed-updates vs proposed.
     for repo_suffix in "updates" "proposed" "backports"; do
         local repo_to_check="${RESOLVED_CODENAME}-${repo_suffix}"
         if [[ "$DISTRO" == "debian" && "$repo_suffix" == "proposed" ]]; then
@@ -493,6 +511,7 @@ main() {
     log_info "Final main distributions list: ${main_releases}"
     log_info "Final security distributions list: ${security_releases:-None}"
 
+    # Prepare for and execute the sync.
     perform_bandwidth_test
     cleanup_corrupted_files
 
@@ -515,6 +534,7 @@ main() {
     fi
 }
 
+# Script entry point
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
