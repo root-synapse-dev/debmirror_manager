@@ -5,7 +5,7 @@
 #
 #═══════════════════════════════════════════════════════════════════════════════
 # Script:      debmirror-manager
-# Version:     2.0.0 (Stable Release)
+# Version:     2.0.1 (Enhanced UX Release)
 # Author:      Synapse Dev Ω (Powered with AI)
 # License:     MIT
 # Description: Enterprise-grade Debian & Ubuntu repository mirror automation.
@@ -24,7 +24,7 @@ set -euo pipefail
 # 1. METADATA AND STYLE CONSTANTS
 #═══════════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.0 (Stable Release)"
+readonly SCRIPT_VERSION="2.0.1 (Enhanced UX Release)"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -135,7 +135,9 @@ acquire_lock() {
     log_debug "Attempting to acquire lock: $LOCK_FILE"
     exec 200>"$LOCK_FILE"
     if ! flock -n 200; then
-        log_error "Another instance of $SCRIPT_NAME is already running. Aborting."
+        log_error "Ya hay otra instancia de '$SCRIPT_NAME' en ejecución. Abortando."
+        printf "\n    ${COLOR_CYAN}Para encontrar el proceso existente, puedes usar el comando:${COLOR_RESET}\n"
+        printf "    ${STYLE_BOLD}ps aux | grep \"%s\"${COLOR_RESET}\n\n" "$SCRIPT_NAME"
         exit 1
     fi
     LOCK_ACQUIRED=true
@@ -323,11 +325,19 @@ validate_dependencies() {
     log_info "Validating dependencies..."
     local -A dep_map=([debmirror]=debmirror [curl]=curl [bc]=bc [flock]=util-linux)
     local missing_cmds=()
+    local missing_pkgs=()
+
     for cmd in "${!dep_map[@]}"; do
-        command -v "$cmd" &>/dev/null || missing_cmds+=("$cmd (${dep_map[$cmd]})")
+        if ! command -v "$cmd" &>/dev/null; then
+            missing_cmds+=("$cmd (del paquete: ${dep_map[$cmd]})")
+            missing_pkgs+=("${dep_map[$cmd]}")
+        fi
     done
-    if [[ ${#missing_cmds[@]} -gt 0 ]]; then
-        log_error "Missing required command(s): ${missing_cmds[*]}. Please install them."
+
+    if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
+        log_error "Faltan comandos requeridos: ${missing_cmds[*]}."
+        printf "\n    ${COLOR_CYAN}Para solucionarlo, por favor ejecuta:${COLOR_RESET}\n"
+        printf "    ${STYLE_BOLD}sudo apt-get install %s${COLOR_RESET}\n\n" "${missing_pkgs[*]}"
         return 1
     fi
     log_info "All dependencies are satisfied."
@@ -368,7 +378,10 @@ resolve_release_version() {
             RESOLVED_CODENAME="$version_to_resolve"
             log_info "Codename '${RESOLVED_CODENAME}' is valid and exists on the mirror."
         else
-            log_error "Invalid or non-existent codename: '${version_to_resolve}' on ${MIRROR_HOST}."
+            log_error "El 'codename' '${version_to_resolve}' es inválido o no existe en ${MIRROR_HOST}."
+            printf "\n    ${COLOR_CYAN}Por favor, verifica el nombre de la versión que deseas sincronizar.${COLOR_RESET}\n"
+            printf "    - ${STYLE_BOLD}Listado de releases de Debian:${COLOR_RESET} https://www.debian.org/releases/\n"
+            printf "    - ${STYLE_BOLD}Listado de releases de Ubuntu:${COLOR_RESET} https://wiki.ubuntu.com/Releases\n\n"
             return 1
         fi
     fi
@@ -380,7 +393,12 @@ validate_environment() {
     log_info "Validating environment..."
     mkdir -p "${MIRROR_PATH}${MIRROR_ROOT}" "${MIRROR_PATH}${MIRROR_SECURITY_ROOT}"
     for path in "${MIRROR_PATH}${MIRROR_ROOT}" "${MIRROR_PATH}${MIRROR_SECURITY_ROOT}"; do
-        if ! [[ -w "$path" ]]; then log_error "Mirror path '$path' is not writable."; return 1; fi
+        if ! [[ -w "$path" ]]; then
+            log_error "El directorio del espejo '$path' no tiene permisos de escritura."
+            printf "\n    ${COLOR_CYAN}Para solucionarlo, asegúrate de que el usuario actual ($(whoami)) sea el propietario:${COLOR_RESET}\n"
+            printf "    ${STYLE_BOLD}sudo chown -R $(whoami) \"%s\"${COLOR_RESET}\n\n" "$MIRROR_PATH"
+            return 1
+        fi
     done
     
     local free_space_kb; free_space_kb=$(df -kP "$MIRROR_PATH" | awk 'NR==2 {print $4}')
@@ -388,7 +406,11 @@ validate_environment() {
     log_info "Available space for '$MIRROR_PATH': ${free_space_gb} GB"
 
     if (( $(echo "$free_space_gb < $CRITICAL_FREE_SPACE_GB" | bc -l) )); then
-        log_error "CRITICAL LOW SPACE: ${free_space_gb}GB available < ${CRITICAL_FREE_SPACE_GB}GB required."
+        log_error "ESPACIO CRÍTICO: ${free_space_gb}GB disponibles < ${CRITICAL_FREE_SPACE_GB}GB requeridos."
+        printf "\n    ${COLOR_YELLOW}El script no continuará para evitar llenar el disco.${COLOR_RESET}\n"
+        printf "    ${COLOR_CYAN}Sugerencias para liberar espacio:${COLOR_RESET}\n"
+        printf "    1. Revisa el uso del disco con: ${STYLE_BOLD}df -h \"%s\"${COLOR_RESET}\n" "$MIRROR_PATH"
+        printf "    2. Encuentra los directorios más grandes dentro del espejo con: ${STYLE_BOLD}du -sh \"%s\"/*${COLOR_RESET}\n\n" "$MIRROR_PATH"
         return 1
     elif (( $(echo "$free_space_gb < $MIN_SPACE_GB_DESIRED" | bc -l) )); then
         log_warning "LOW SPACE WARNING: Only ${free_space_gb}GB available. Desired min is ${MIN_SPACE_GB_DESIRED}GB."
@@ -403,7 +425,6 @@ validate_environment() {
     log_info "Environment validation successful."
 }
 
-# *** NEW FUNCTION ***
 # Validates that user-provided sections are valid for the chosen distribution.
 validate_sections() {
     # This check is only necessary if the user has provided custom sections.
@@ -508,7 +529,7 @@ run_debmirror() {
         --arch="$ARCH"
         --method=http
         --rsync-extra=none
-        --diff=none
+		--diff=none
         --cleanup
     )
 
@@ -545,10 +566,16 @@ run_debmirror() {
 # 8. MAIN EXECUTION
 #═══════════════════════════════════════════════════════════════════════════════
 
+#═══════════════════════════════════════════════════════════════════════════════
+# 8. MAIN EXECUTION
+#═══════════════════════════════════════════════════════════════════════════════
+
 main() {
-    # Load configurations from file first, then parse arguments which can override them.
-    load_configuration_file
+    # 1. PROCESAR ARGUMENTOS PRIMERO para saber la ruta del config y otros parámetros.
     process_arguments "$@"
+
+    # 2. AHORA SÍ, intentar cargar el archivo de configuración si se especificó.
+    load_configuration_file
 
     # Set the exit trap. This ensures `cleanup_handler` runs on any script exit.
     trap cleanup_handler EXIT
