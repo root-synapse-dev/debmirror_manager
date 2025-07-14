@@ -44,7 +44,7 @@ readonly STYLE_BOLD="\033[1m"
 # These values can be overridden by a config file, environment variables, or command-line arguments.
 
 # --- Basic Mirror Configuration ---
-declare MIRROR_PATH="${MIRROR_PATH:-/mnt/TOSHIBA/MIRROR}"
+declare MIRROR_PATH="${MIRROR_PATH:-/home/MIRROR}"
 declare ARCH="${MIRROR_ARCH:-amd64}"
 declare RELEASE_VERSION="stable" # Default release to sync (e.g., 'bookworm', 'noble', 'stable', 'lts').
 declare DISTRO=""                # 'debian' or 'ubuntu'. If empty, script will attempt auto-detection.
