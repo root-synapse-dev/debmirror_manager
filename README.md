@@ -1,6 +1,6 @@
 # Universal Mirror Manager
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Supports](https://img.shields.io/badge/Supports-Debian%20%26%20Ubuntu-green.svg)
 
