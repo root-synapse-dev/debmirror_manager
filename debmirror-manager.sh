@@ -499,7 +499,6 @@ run_debmirror() {
     local debmirror_cmd=(
         debmirror
         --progress
-        --verbose
         --ignore-release-gpg
         --keyring="$GPG_KEYRING"
         --host="$host"
@@ -507,7 +506,8 @@ run_debmirror() {
         --dist="$dists"
         --section="$SECTIONS"
         --arch="$ARCH"
-        --method=http # Hardcoded to http for maximum compatibility.
+        --method=http
+        --rsync-extra=none
         --diff=none
         --cleanup
     )
